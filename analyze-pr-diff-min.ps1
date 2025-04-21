@@ -115,22 +115,22 @@ foreach ($file in $MODIFIED_FILES) {
     
     if ((Test-Path $base_path) -and (Test-Path $head_path)) {
         "File: $file" | Out-File -FilePath $OUTPUT_FILE -Append
-        "--------" | Out-File -FilePath $OUTPUT_FILE -Append
-        "--Original--" | Out-File -FilePath $OUTPUT_FILE -Append
+        "<<<<>>>>" | Out-File -FilePath $OUTPUT_FILE -Append
+        "<<<<previous>>>>" | Out-File -FilePath $OUTPUT_FILE -Append
         try {
             Get-Content $base_path | Out-File -FilePath $OUTPUT_FILE -Append
         }
         catch {
             "[Error reading base file]" | Out-File -FilePath $OUTPUT_FILE -Append
         }
-        "--New--" | Out-File -FilePath $OUTPUT_FILE -Append
+        "<<<<new>>>>" | Out-File -FilePath $OUTPUT_FILE -Append
         try {
             Get-Content $head_path | Out-File -FilePath $OUTPUT_FILE -Append
         }
         catch {
             "[Error reading head file]" | Out-File -FilePath $OUTPUT_FILE -Append
         }
-        "--------" | Out-File -FilePath $OUTPUT_FILE -Append
+        "<<<<>>>>" | Out-File -FilePath $OUTPUT_FILE -Append
         "" | Out-File -FilePath $OUTPUT_FILE -Append
     }
 }

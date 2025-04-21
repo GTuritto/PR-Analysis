@@ -127,8 +127,8 @@ foreach ($file in $MODIFIED_FILES) {
 
     if ((Test-Path $base_file) -and (Test-Path $head_file)) {
         "`n## 🔄 Modified: ``$file```n" | Out-File -FilePath $OUTPUT_FILE -Append
-        '--------------' | Out-File -FilePath $OUTPUT_FILE -Append
-        "--Original--`n" | Out-File -FilePath $OUTPUT_FILE -Append
+        '<<<<>>>>' | Out-File -FilePath $OUTPUT_FILE -Append
+        "<<<<previous>>>>`n" | Out-File -FilePath $OUTPUT_FILE -Append
         
         try {
             Get-Content $base_file | Out-File -FilePath $OUTPUT_FILE -Append
@@ -137,7 +137,7 @@ foreach ($file in $MODIFIED_FILES) {
             "*Error reading base version*" | Out-File -FilePath $OUTPUT_FILE -Append
         }
         
-        "`n--New--`n" | Out-File -FilePath $OUTPUT_FILE -Append
+        "`n<<<<new>>>>`n" | Out-File -FilePath $OUTPUT_FILE -Append
         
         try {
             Get-Content $head_file | Out-File -FilePath $OUTPUT_FILE -Append
@@ -146,7 +146,7 @@ foreach ($file in $MODIFIED_FILES) {
             "*Error reading new version*" | Out-File -FilePath $OUTPUT_FILE -Append
         }
         
-        '--------------' | Out-File -FilePath $OUTPUT_FILE -Append
+        '<<<<>>>>' | Out-File -FilePath $OUTPUT_FILE -Append
     }
 }
 

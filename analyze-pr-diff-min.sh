@@ -85,12 +85,12 @@ for file in "${MODIFIED_FILES[@]}"; do
   [[ -f "$base_path" && -f "$head_path" ]] || continue
 
   echo "File: $file" >> "$OUTPUT_FILE"
-  echo "--------" >> "$OUTPUT_FILE"
-  echo "--Original--" >> "$OUTPUT_FILE"
+  echo "<<<<>>>>" >> "$OUTPUT_FILE"
+  echo "<<<<previous>>>>" >> "$OUTPUT_FILE"
   cat "$base_path" >> "$OUTPUT_FILE" || echo "[Error reading base file]" >> "$OUTPUT_FILE"
-  echo "--New--" >> "$OUTPUT_FILE"
+  echo "<<<<new>>>>" >> "$OUTPUT_FILE"
   cat "$head_path" >> "$OUTPUT_FILE" || echo "[Error reading head file]" >> "$OUTPUT_FILE"
-  echo "--------" >> "$OUTPUT_FILE"
+  echo "<<<<>>>>" >> "$OUTPUT_FILE"
   echo "" >> "$OUTPUT_FILE"
 done
 

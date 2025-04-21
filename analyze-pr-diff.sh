@@ -98,12 +98,12 @@ for file in "${MODIFIED_FILES[@]}"; do
 
   if [[ -f "$base_file" && -f "$head_file" ]]; then
     echo -e "\n## 🔄 Modified: \`$file\`\n" >> "$OUTPUT_FILE"
-    echo '--------------' >> "$OUTPUT_FILE"
-    echo -e "--Original--\n" >> "$OUTPUT_FILE"
+    echo '<<<<>>>>' >> "$OUTPUT_FILE"
+    echo -e "<<<<previous>>>>\n" >> "$OUTPUT_FILE"
     cat "$base_file" >> "$OUTPUT_FILE" || echo "*Error reading base version*" >> "$OUTPUT_FILE"
-    echo -e "\n--New--\n" >> "$OUTPUT_FILE"
+    echo -e "\n<<<<new>>>>\n" >> "$OUTPUT_FILE"
     cat "$head_file" >> "$OUTPUT_FILE" || echo "*Error reading new version*" >> "$OUTPUT_FILE"
-    echo '--------------' >> "$OUTPUT_FILE"
+    echo '<<<<>>>>' >> "$OUTPUT_FILE"
   fi
 done
 
