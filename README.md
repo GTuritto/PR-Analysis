@@ -5,10 +5,12 @@ This repository contains shell and PowerShell scripts for analyzing GitHub pull 
 ## Scripts
 
 ### Bash Scripts
+
 - `analyze-pr-diff.sh` - Full featured script for PR analysis with detailed output
 - `analyze-pr-diff-min.sh` - Minimalist version of the PR analysis script
 
 ### PowerShell Scripts
+
 - `analyze-pr-diff.ps1` - Full featured script for PR analysis in PowerShell
 - `analyze-pr-diff-min.ps1` - Minimalist version of the PR analysis script in PowerShell
 
@@ -32,6 +34,8 @@ This repository contains shell and PowerShell scripts for analyzing GitHub pull 
 
 ## Unit Testing
 
+### Testing Bash Scripts
+
 Unit tests are available in the `unit_tests.sh` script:
 
 ```bash
@@ -47,9 +51,19 @@ The unit tests verify that the scripts:
 - Construct proper GitHub API URLs
 - Include error handling
 
+### Testing PowerShell Scripts
+
+To test the PowerShell scripts, you can use the built-in validation in PowerShell:
+
+```powershell
+# Validate PowerShell script syntax
+Test-ScriptFileInfo -Path analyze-pr-diff.ps1
+Test-ScriptFileInfo -Path analyze-pr-diff-min.ps1
+```
+
 ## Output
 
-The scripts generate a markdown file with:
+All scripts (both Bash and PowerShell) generate markdown files with:
 - Lists of new, deleted, and modified files
 - Full content comparison for modified files
 
@@ -114,3 +128,5 @@ Generated on: Mon Apr 21 09:25:00 CEST 2025
 // Modified content
 <<<<>>>>
 ```
+
+> Note: Both the Bash and PowerShell scripts produce identical output formats. The PowerShell scripts are functionally equivalent to their Bash counterparts but optimized for Windows environments.
