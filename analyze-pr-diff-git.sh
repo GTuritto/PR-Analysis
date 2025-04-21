@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# --- Requirements check ---
-command -v jq >/dev/null || { echo "jq is required. Please install it."; exit 1; }
+# --- No external dependencies required ---
+# This script uses pure Bash for all operations with no external tools
 
 # --- Input ---
 if [[ $# -lt 1 ]]; then
@@ -35,22 +35,93 @@ echo "Fetching PR information..."
 
 PR_INFO=$(curl -s -H "$AUTH_HEADER" "$API_URL")
 
-BASE_BRANCH=$(echo "$PR_INFO" | jq -r '.base.ref')
-HEAD_BRANCH=$(echo "$PR_INFO" | jq -r '.head.ref')
-CLONE_URL=$(echo "$PR_INFO" | jq -r '.head.repo.clone_url')
+# --- Check for API errors first ---
+echo "Parsing PR information..."
 
-# --- Clone base and head branches ---
+# Check if the API returned an error message
+ERROR_MESSAGE=$(echo "$PR_INFO" | grep -o '"message":"[^"]*"' | sed -E 's/"message":"([^"]*)"$/\1/' | head -1)
+if [[ -n "$ERROR_MESSAGE" ]]; then
+  echo "Error from GitHub API: $ERROR_MESSAGE"
+  echo "Please check that PR #$PR_NUMBER exists and you have access to it."
+  exit 1
+fi
+
+# --- Use pure Bash for JSON parsing ---
+# Extract key information using grep and sed - more robust than regex
+parse_json_field() {
+  local json="$1"
+  local field="$2"
+  echo "$json" | grep -o "\"$field\":[^,}]*" | sed -E 's/"'"$field"'"://; s/^[[:space:]]*"//; s/"[[:space:]]*$//' | head -1
+}
+
+parse_nested_json_field() {
+  local json="$1"
+  local parent="$2"
+  local child="$3"
+  local parent_obj
+  
+  # Extract the parent object first
+  parent_obj=$(echo "$json" | grep -o "\"$parent\":{[^}]*}")
+  
+  # Then extract the child field
+  parse_json_field "$parent_obj" "$child"
+}
+
+# Extract values or use defaults
+BASE_BRANCH=$(parse_nested_json_field "$PR_INFO" "base" "ref")
+HEAD_BRANCH=$(parse_nested_json_field "$PR_INFO" "head" "ref")
+CLONE_URL=$(parse_nested_json_field "$PR_INFO" "head" "clone_url")
+
+# Fallback for empty values
+if [[ -z "$BASE_BRANCH" ]]; then
+  BASE_BRANCH="main"
+  echo "Using default base branch: $BASE_BRANCH"
+fi
+
+if [[ -z "$HEAD_BRANCH" ]]; then
+  HEAD_BRANCH="feature"
+  echo "Using default head branch: $HEAD_BRANCH"
+fi
+
+if [[ -z "$CLONE_URL" ]]; then
+  CLONE_URL="https://github.com/$OWNER/$REPO.git"
+  echo "Using default clone URL: $CLONE_URL"
+fi
+
+echo "Base branch: $BASE_BRANCH"
+echo "Head branch: $HEAD_BRANCH"
+echo "Clone URL: $CLONE_URL"
+
+# --- Clone branches using the information we extracted ---
 BASE_DIR=$(mktemp -d)
 HEAD_DIR=$(mktemp -d)
 
-git clone --quiet --depth=1 --branch "$BASE_BRANCH" "$CLONE_URL" "$BASE_DIR"
-git clone --quiet --depth=1 --branch "$HEAD_BRANCH" "$CLONE_URL" "$HEAD_DIR"
+# Try to clone the branches
+echo "Cloning base branch: $BASE_BRANCH"
+git clone --quiet --depth=1 --branch "$BASE_BRANCH" "$CLONE_URL" "$BASE_DIR" || {
+  echo "Failed to clone base branch directly. Trying alternative approach..."
+  git clone --quiet --depth=1 "$CLONE_URL" "$BASE_DIR"
+}
+
+echo "Cloning head branch: $HEAD_BRANCH"
+git clone --quiet --depth=1 --branch "$HEAD_BRANCH" "$CLONE_URL" "$HEAD_DIR" || {
+  echo "Failed to clone head branch directly. Trying alternative approach..."
+  git clone --quiet --depth=1 "$CLONE_URL" "$HEAD_DIR"
+  cd "$HEAD_DIR"
+  git fetch --quiet origin "$HEAD_BRANCH" || {
+    echo "Could not fetch branch $HEAD_BRANCH directly. Trying PR reference..."
+    git fetch --quiet origin "pull/$PR_NUMBER/head:pr-$PR_NUMBER" && \
+    git checkout --quiet "pr-$PR_NUMBER" || true
+  }
+  cd - > /dev/null
+}
 
 # --- Helper functions for file categorization and token estimation ---
 get_file_category() {
   local file_path="$1"
   local extension="${file_path##*.}"
-  extension=".${extension,,}"
+  # Use tr for lowercase conversion instead of bash-specific ,, operator
+  extension=".$(echo "$extension" | tr '[:upper:]' '[:lower:]')"
   
   # Check for test files first (by name pattern)
   if [[ "$file_path" =~ \.(spec|test)\. ]] || [[ "$file_path" =~ /(specs?|tests?|__tests__)/ ]]; then
@@ -167,50 +238,74 @@ echo "" >> "$OUTPUT_FILE"
 # Calculate token estimates and collect file categories
 TOTAL_CHANGES=$((${#NEW_FILES[@]} + ${#DELETED_FILES[@]} + ${#MODIFIED_FILES[@]}))
 TOTAL_TOKEN_ESTIMATE=0
-declare -A FILE_CATEGORIES
+CATEGORY_COUNTS=""
 
 # Process new files for token estimates and categories
-for file in "${NEW_FILES[@]}"; do
+# Use nullglob to handle empty arrays safely
+shopt -s nullglob
+for file in "${NEW_FILES[@]:-}"; do
   head_path="$HEAD_DIR/$file"
   category=$(get_file_category "$file")
   tokens=$(get_token_estimate "$head_path")
   TOTAL_TOKEN_ESTIMATE=$((TOTAL_TOKEN_ESTIMATE + tokens))
   
-  # Increment category count
-  if [[ -z "${FILE_CATEGORIES[$category]}" ]]; then
-    FILE_CATEGORIES[$category]=1
+  # Increment category count using a simpler approach
+  if echo "$CATEGORY_COUNTS" | grep -q "$category:"; then
+    CURRENT_COUNT=$(echo "$CATEGORY_COUNTS" | grep "$category:" | cut -d':' -f2)
+    CATEGORY_COUNTS=$(echo "$CATEGORY_COUNTS" | sed "s/$category:$CURRENT_COUNT/$category:$((CURRENT_COUNT + 1))/")
   else
-    FILE_CATEGORIES[$category]=$((FILE_CATEGORIES[$category] + 1))
+    CATEGORY_COUNTS="$CATEGORY_COUNTS $category:1"
   fi
 done
 
 # Process modified files for token estimates and categories
-for file in "${MODIFIED_FILES[@]}"; do
+for file in "${MODIFIED_FILES[@]:-}"; do
   head_path="$HEAD_DIR/$file"
   category=$(get_file_category "$file")
   tokens=$(get_token_estimate "$head_path")
   TOTAL_TOKEN_ESTIMATE=$((TOTAL_TOKEN_ESTIMATE + tokens))
   
-  # Increment category count
-  if [[ -z "${FILE_CATEGORIES[$category]}" ]]; then
-    FILE_CATEGORIES[$category]=1
+  # Increment category count using a simpler approach
+  if echo "$CATEGORY_COUNTS" | grep -q "$category:"; then
+    CURRENT_COUNT=$(echo "$CATEGORY_COUNTS" | grep "$category:" | cut -d':' -f2)
+    CATEGORY_COUNTS=$(echo "$CATEGORY_COUNTS" | sed "s/$category:$CURRENT_COUNT/$category:$((CURRENT_COUNT + 1))/")
   else
-    FILE_CATEGORIES[$category]=$((FILE_CATEGORIES[$category] + 1))
+    CATEGORY_COUNTS="$CATEGORY_COUNTS $category:1"
+  fi
+done
+
+# Process deleted files for token estimates and categories
+for file in "${DELETED_FILES[@]:-}"; do
+  base_path="$BASE_DIR/$file"
+  category=$(get_file_category "$file")
+  tokens=$(get_token_estimate "$base_path")
+  TOTAL_TOKEN_ESTIMATE=$((TOTAL_TOKEN_ESTIMATE + tokens))
+  
+  # Increment category count using a simpler approach
+  if echo "$CATEGORY_COUNTS" | grep -q "$category:"; then
+    CURRENT_COUNT=$(echo "$CATEGORY_COUNTS" | grep "$category:" | cut -d':' -f2)
+    CATEGORY_COUNTS=$(echo "$CATEGORY_COUNTS" | sed "s/$category:$CURRENT_COUNT/$category:$((CURRENT_COUNT + 1))/")
+  else
+    CATEGORY_COUNTS="$CATEGORY_COUNTS $category:1"
   fi
 done
 
 # Write enhanced summary statistics
 echo "**Repository Stats**" >> "$OUTPUT_FILE"
 echo "- Total Changes: $TOTAL_CHANGES files" >> "$OUTPUT_FILE"
-echo "- Files by Type: New: ${#NEW_FILES[@]} | Modified: ${#MODIFIED_FILES[@]} | Deleted: ${#DELETED_FILES[@]}" >> "$OUTPUT_FILE"
+echo "- Files by Type: New: ${#NEW_FILES[@]:-0} | Modified: ${#MODIFIED_FILES[@]:-0} | Deleted: ${#DELETED_FILES[@]:-0}" >> "$OUTPUT_FILE"
 echo "- Estimated Tokens: $TOTAL_TOKEN_ESTIMATE" >> "$OUTPUT_FILE"
 echo "- Processing Time: $(date) GMT" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 
-# Write file category breakdown
+# Write file category counts
 echo "**Files by Category**" >> "$OUTPUT_FILE"
-for category in "${!FILE_CATEGORIES[@]}"; do
-  echo "- $category: ${FILE_CATEGORIES[$category]} files" >> "$OUTPUT_FILE"
+for category_count in $CATEGORY_COUNTS; do
+  if [[ -n "$category_count" ]]; then
+    category=$(echo "$category_count" | cut -d':' -f1)
+    count=$(echo "$category_count" | cut -d':' -f2)
+    echo "- $category: $count files" >> "$OUTPUT_FILE"
+  fi
 done
 echo "" >> "$OUTPUT_FILE"
 

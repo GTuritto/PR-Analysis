@@ -2,11 +2,8 @@
 # Stop on errors
 $ErrorActionPreference = "Stop"
 
-# --- Dependencies check ---
-if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
-    Write-Error "This script requires 'jq'. Please install it."
-    exit 1
-}
+# --- No external dependencies required ---
+# This script uses only native PowerShell capabilities
 
 # --- Input validation ---
 param (

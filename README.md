@@ -1,6 +1,6 @@
 # PR Analysis Tools for LLM Code Review
 
-This repository contains intelligent scripts that generate optimized PR diffs with rich metadata, providing perfect context for LLMs (like ChatGPT or Claude) to perform high-quality code reviews.
+This repository contains intelligent, zero-dependency scripts that generate optimized PR diffs with rich metadata, providing perfect context for LLMs (like ChatGPT or Claude) to perform high-quality code reviews.
 
 ## Scripts
 
@@ -28,11 +28,16 @@ This repository contains intelligent scripts that generate optimized PR diffs wi
 
 ## Requirements
 
-- `jq` - JSON processor for parsing GitHub API responses
-- `git` - For cloning repositories and generating diffs
+- `git` - For cloning repositories and generating diffs (the only external dependency)
 - Access to GitHub or Azure DevOps (with optional token for API rate limits)
 
 ## Features
+
+### Zero External Dependencies
+
+- **Pure Bash Implementation**: The shell script uses only Bash built-ins and standard Unix tools
+- **Native PowerShell**: The PowerShell scripts use only built-in PowerShell capabilities
+- **No Third-Party Tools**: No need to install jq, Python, or any other external tools
 
 ### LLM-Optimized Output
 

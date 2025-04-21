@@ -2,11 +2,8 @@
 # Stop on errors
 $ErrorActionPreference = "Stop"
 
-# --- Requirements check ---
-if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
-    Write-Error "jq is required. Please install it."
-    exit 1
-}
+# --- No external dependencies required ---
+# This script uses only native PowerShell capabilities
 
 # --- Input ---
 if ($args.Count -lt 1) {
@@ -51,9 +48,9 @@ if ($GITHUB_TOKEN) {
 }
 
 Write-Output "Fetching PR information..."
-
 $PR_INFO = Invoke-RestMethod -Uri $API_URL -Headers $AUTH_HEADER
 
+# Use native PowerShell JSON handling
 $BASE_BRANCH = $PR_INFO.base.ref
 $HEAD_BRANCH = $PR_INFO.head.ref
 $CLONE_URL = $PR_INFO.head.repo.clone_url
