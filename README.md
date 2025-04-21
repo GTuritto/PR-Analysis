@@ -30,8 +30,87 @@ This repository contains shell and PowerShell scripts for analyzing GitHub pull 
 - `git` - For cloning repositories
 - Access to GitHub (with optional token for API rate limits)
 
+## Unit Testing
+
+Unit tests are available in the `unit_tests.sh` script:
+
+```bash
+# Run the unit tests
+./unit_tests.sh
+```
+
+The unit tests verify that the scripts:
+- Have correct syntax
+- Include dependency checks
+- Validate input arguments
+- Handle output files correctly
+- Construct proper GitHub API URLs
+- Include error handling
+
 ## Output
 
 The scripts generate a markdown file with:
 - Lists of new, deleted, and modified files
 - Full content comparison for modified files
+
+### Example Output (Minimal Version)
+
+```markdown
+PR: user/repo #123
+Base: main
+Head: feature-branch
+
+New Files:
+- src/new.js
+
+Deleted Files:
+- src/deleted.js
+
+Modified Files:
+- src/modified.js
+
+File: src/modified.js
+<<<<>>>>
+<<<<previous>>>>
+// Original content
+<<<<new>>>>
+// Modified content
+<<<<>>>>
+```
+
+### Example Output (Full Version)
+
+```markdown
+# PR Analysis for user/repo PR #123
+Base branch: `main`
+Head branch: `feature-branch`
+Generated on: Mon Apr 21 09:25:00 CEST 2025
+
+---
+
+## 🟩 New Files
+
+- `src/new.js`
+
+## 🟥 Deleted Files
+
+- `src/deleted.js`
+
+## 🟨 Modified Files
+
+- `src/modified.js`
+
+---
+
+# Detailed Diffs
+
+## 🔄 Modified: `src/modified.js`
+
+<<<<>>>>
+<<<<previous>>>>
+// Original content
+
+<<<<new>>>>
+// Modified content
+<<<<>>>>
+```

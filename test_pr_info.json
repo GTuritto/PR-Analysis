@@ -1,0 +1,11 @@
+{
+  "base": {
+    "ref": "main"
+  },
+  "head": {
+    "ref": "feature-branch",
+    "repo": {
+      "clone_url": "https://github.com/user/repo.git"
+    }
+  }
+}
