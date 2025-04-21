@@ -98,13 +98,18 @@ git clone --quiet --depth=1 --branch $BASE_BRANCH $CLONE_URL $BASE_DIR
 Write-Output "Cloning head branch..."
 git clone --quiet --depth=1 --branch $HEAD_BRANCH $CLONE_URL $HEAD_DIR
 
-# --- Output file ---
+# --- Output file optimized for LLM consumption ---
 $OUTPUT_FILE = "pr_diff_analysis.md"
-"# PR Analysis for $Repository PR #$PullRequestId" | Out-File -FilePath $OUTPUT_FILE
-"Base branch: ``$BASE_BRANCH``" | Out-File -FilePath $OUTPUT_FILE -Append
-"Head branch: ``$HEAD_BRANCH``" | Out-File -FilePath $OUTPUT_FILE -Append
-"Generated on: $(Get-Date)" | Out-File -FilePath $OUTPUT_FILE -Append
-"`n---`n" | Out-File -FilePath $OUTPUT_FILE -Append
+"# PR REVIEW CONTEXT" | Out-File -FilePath $OUTPUT_FILE
+"" | Out-File -FilePath $OUTPUT_FILE -Append
+"PR: $Repository #$PullRequestId" | Out-File -FilePath $OUTPUT_FILE -Append
+"URL: $PR_URL" | Out-File -FilePath $OUTPUT_FILE -Append
+"Organization: $Organization" | Out-File -FilePath $OUTPUT_FILE -Append
+"Project: $Project" | Out-File -FilePath $OUTPUT_FILE -Append
+"Base Branch: $BASE_BRANCH" | Out-File -FilePath $OUTPUT_FILE -Append
+"Head Branch: $HEAD_BRANCH" | Out-File -FilePath $OUTPUT_FILE -Append
+"Generated: $(Get-Date)" | Out-File -FilePath $OUTPUT_FILE -Append
+"" | Out-File -FilePath $OUTPUT_FILE -Append
 
 # --- Compare the two directories ---
 Write-Output "Comparing branches..."
@@ -143,25 +148,58 @@ foreach ($file in $BASE_FILES) {
     }
 }
 
-# --- Output results ---
-function Write-Section {
-    param (
-        [string]$title,
-        [array]$files
-    )
+# --- Write PR Summary ---
+"## PR SUMMARY" | Out-File -FilePath $OUTPUT_FILE -Append
+"" | Out-File -FilePath $OUTPUT_FILE -Append
+
+# Summary counts for quick understanding
+"Total Changes: $($NEW_FILES.Count + $DELETED_FILES.Count + $MODIFIED_FILES.Count) files" | Out-File -FilePath $OUTPUT_FILE -Append
+"New: $($NEW_FILES.Count) | Modified: $($MODIFIED_FILES.Count) | Deleted: $($DELETED_FILES.Count)" | Out-File -FilePath $OUTPUT_FILE -Append
+"" | Out-File -FilePath $OUTPUT_FILE -Append
+
+# Write detailed file lists
+if ($NEW_FILES.Count -gt 0) {
+    "### New Files:" | Out-File -FilePath $OUTPUT_FILE -Append
+    foreach ($file in $NEW_FILES) {
+        "- $file" | Out-File -FilePath $OUTPUT_FILE -Append
+    }
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
     
-    "`n## $title`n" | Out-File -FilePath $OUTPUT_FILE -Append
-    foreach ($file in $files) {
-        "- ``$file``" | Out-File -FilePath $OUTPUT_FILE -Append
+    # Also include the complete content of new files (useful for LLM review)
+    "### NEW FILE CONTENTS" | Out-File -FilePath $OUTPUT_FILE -Append
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+    
+    foreach ($file in $NEW_FILES) {
+        $head_path = Join-Path $HEAD_DIR $file
+        if (Test-Path $head_path) {
+            "FILE: $file" | Out-File -FilePath $OUTPUT_FILE -Append
+            "<NEW_CONTENT>" | Out-File -FilePath $OUTPUT_FILE -Append
+            Get-Content $head_path | Out-File -FilePath $OUTPUT_FILE -Append
+            "</NEW_CONTENT>" | Out-File -FilePath $OUTPUT_FILE -Append
+            "" | Out-File -FilePath $OUTPUT_FILE -Append
+        }
     }
 }
 
-Write-Section -title "🟩 New Files" -files $NEW_FILES
-Write-Section -title "🟥 Deleted Files" -files $DELETED_FILES
-Write-Section -title "🟨 Modified Files" -files $MODIFIED_FILES
+if ($DELETED_FILES.Count -gt 0) {
+    "### Deleted Files:" | Out-File -FilePath $OUTPUT_FILE -Append
+    foreach ($file in $DELETED_FILES) {
+        "- $file" | Out-File -FilePath $OUTPUT_FILE -Append
+    }
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+}
 
-# --- Show diffs for modified files ---
-"`n---`n`n# Detailed Diffs`n" | Out-File -FilePath $OUTPUT_FILE -Append
+if ($MODIFIED_FILES.Count -gt 0) {
+    "### Modified Files:" | Out-File -FilePath $OUTPUT_FILE -Append
+    foreach ($file in $MODIFIED_FILES) {
+        "- $file" | Out-File -FilePath $OUTPUT_FILE -Append
+    }
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+}
+
+# --- Optimize diff output for modified files (for LLM consumption) ---
+"### DIFF SUMMARY" | Out-File -FilePath $OUTPUT_FILE -Append
+"" | Out-File -FilePath $OUTPUT_FILE -Append
 
 foreach ($file in $MODIFIED_FILES) {
     Write-Output "Processing diff for $file..."
@@ -170,91 +208,24 @@ foreach ($file in $MODIFIED_FILES) {
     $head_file = Join-Path $HEAD_DIR $file
 
     if ((Test-Path $base_file) -and (Test-Path $head_file)) {
-        "`n## 🔄 Modified: ``$file```n" | Out-File -FilePath $OUTPUT_FILE -Append
-        '<<<<>>>>' | Out-File -FilePath $OUTPUT_FILE -Append
-        "<<<<previous>>>>`n" | Out-File -FilePath $OUTPUT_FILE -Append
+        "FILE: $file" | Out-File -FilePath $OUTPUT_FILE -Append
+        "<DIFF>" | Out-File -FilePath $OUTPUT_FILE -Append
         
-        try {
-            Get-Content $base_file | Out-File -FilePath $OUTPUT_FILE -Append
-        }
-        catch {
-            "*Error reading base version*" | Out-File -FilePath $OUTPUT_FILE -Append
-        }
+        # Use git diff with context to get a concise diff
+        $diff = & git diff --no-index --unified=3 $base_file $head_file
         
-        "`n<<<<new>>>>`n" | Out-File -FilePath $OUTPUT_FILE -Append
-        
-        try {
-            Get-Content $head_file | Out-File -FilePath $OUTPUT_FILE -Append
-        }
-        catch {
-            "*Error reading new version*" | Out-File -FilePath $OUTPUT_FILE -Append
+        # Remove the git diff header lines and write a cleaner output
+        $diff | Select-Object -Skip 4 | ForEach-Object {
+            $_ -replace "^\\+", "+ " -replace "^-", "- " | Out-File -FilePath $OUTPUT_FILE -Append
         }
         
-        '<<<<>>>>' | Out-File -FilePath $OUTPUT_FILE -Append
+        "</DIFF>" | Out-File -FilePath $OUTPUT_FILE -Append
+        "" | Out-File -FilePath $OUTPUT_FILE -Append
     }
 }
 
-# --- Add PR comments with the most important changes ---
-if ($PAT -and $NEW_FILES.Count + $DELETED_FILES.Count + $MODIFIED_FILES.Count -gt 0) {
-    Write-Output "Adding PR comment with analysis results..."
-    
-    # Build the comment
-    $comment = "## 🔍 PR Analysis Results`n`n"
-    
-    if ($NEW_FILES.Count -gt 0) {
-        $comment += "### 🟩 New Files: $($NEW_FILES.Count)`n"
-        foreach ($file in $NEW_FILES | Select-Object -First 5) {
-            $comment += "- ``$file```n"
-        }
-        if ($NEW_FILES.Count -gt 5) {
-            $comment += "- ...and $($NEW_FILES.Count - 5) more`n"
-        }
-        $comment += "`n"
-    }
-    
-    if ($DELETED_FILES.Count -gt 0) {
-        $comment += "### 🟥 Deleted Files: $($DELETED_FILES.Count)`n"
-        foreach ($file in $DELETED_FILES | Select-Object -First 5) {
-            $comment += "- ``$file```n"
-        }
-        if ($DELETED_FILES.Count -gt 5) {
-            $comment += "- ...and $($DELETED_FILES.Count - 5) more`n"
-        }
-        $comment += "`n"
-    }
-    
-    if ($MODIFIED_FILES.Count -gt 0) {
-        $comment += "### 🟨 Modified Files: $($MODIFIED_FILES.Count)`n"
-        foreach ($file in $MODIFIED_FILES | Select-Object -First 5) {
-            $comment += "- ``$file```n"
-        }
-        if ($MODIFIED_FILES.Count -gt 5) {
-            $comment += "- ...and $($MODIFIED_FILES.Count - 5) more`n"
-        }
-    }
-    
-    $comment += "`n[View full analysis report]($(Join-Path $PWD $OUTPUT_FILE))"
-    
-    # Post comment to PR
-    $commentApiUrl = "$AzDoBaseUrl/_apis/git/repositories/$Repository/pullRequests/$PullRequestId/threads?api-version=$ApiVersion"
-    $commentBody = @{
-        comments = @(
-            @{
-                parentCommentId = 0
-                content = $comment
-            }
-        )
-        status = "active"
-    } | ConvertTo-Json -Depth 5
-    
-    try {
-        Invoke-RestMethod -Uri $commentApiUrl -Headers $AuthHeader -Method Post -Body $commentBody -ContentType "application/json"
-        Write-Output "Successfully added comment to PR #$PullRequestId"
-    }
-    catch {
-        Write-Warning "Failed to add comment to PR. Error: $_"
-    }
-}
+# We're simplifying the script to focus on generating the diff file for LLM consumption
+# Removing the PR comment feature to keep things minimal and focused
 
 # --- Cleanup ---
 Remove-Item -Recurse -Force $BASE_DIR

@@ -1,151 +1,105 @@
-# PR Analysis Tools
+# PR Analysis Tools for LLM Code Review
 
-This repository contains shell and PowerShell scripts for analyzing GitHub pull requests.
+This repository contains lightweight scripts to generate optimized PR diffs that provide the perfect context for LLMs (like ChatGPT or Claude) to perform high-quality code reviews.
 
 ## Scripts
 
-### Bash Scripts
+### GitHub PR Analysis
 
-- `analyze-pr-diff.sh` - Full featured script for PR analysis with detailed output
-- `analyze-pr-diff-min.sh` - Minimalist version of the PR analysis script
+- `analyze-pr-diff-min.sh` - Bash script for GitHub PR diff extraction
+- `analyze-pr-diff-min.ps1` - PowerShell script for GitHub PR diff extraction
 
-### PowerShell Scripts
+### Azure DevOps PR Analysis
 
-- `analyze-pr-diff.ps1` - Full featured script for PR analysis in PowerShell
-- `analyze-pr-diff-min.ps1` - Minimalist version of the PR analysis script in PowerShell
-
-### Azure DevOps Integration
-
-- `analyze-pr-diff-azdo.ps1` - Full featured PowerShell script for Azure DevOps PR analysis
-- `analyze-pr-diff-min-azdo.ps1` - Minimalist PowerShell script for Azure DevOps PR analysis
+- `analyze-pr-diff-azdo.ps1` - PowerShell script for Azure DevOps PR diff extraction
 - `azure-pipelines.yml` - Azure DevOps pipeline configuration for automation
 
 ## Usage
 
 ```bash
-# For Bash scripts
-./analyze-pr-diff.sh <GitHub PR URL> [GitHub Token]
+# For GitHub PR analysis with Bash
 ./analyze-pr-diff-min.sh <GitHub PR URL> [GitHub Token]
 
-# For PowerShell scripts
-./analyze-pr-diff.ps1 <GitHub PR URL> [GitHub Token]
+# For GitHub PR analysis with PowerShell
 ./analyze-pr-diff-min.ps1 <GitHub PR URL> [GitHub Token]
 
-# For Azure DevOps PowerShell scripts
+# For Azure DevOps PR analysis with PowerShell
 ./analyze-pr-diff-azdo.ps1 -PR_URL <Azure_DevOps_PR_URL> [-PAT <PERSONAL_ACCESS_TOKEN>]
-./analyze-pr-diff-min-azdo.ps1 -PR_URL <Azure_DevOps_PR_URL> [-PAT <PERSONAL_ACCESS_TOKEN>]
 ```
 
 ### Azure DevOps Pipeline Integration
 
-To use the scripts in an Azure DevOps pipeline:
+To automate PR analysis in Azure DevOps:
 
 1. Add the `azure-pipelines.yml` file to your repository
 2. Create a new pipeline in Azure DevOps pointing to this file
 3. The pipeline will automatically run on pull requests to the specified branches
-4. You can select between full and minimal analysis using a parameter
 
 ## Requirements
 
 - `jq` - JSON processor for parsing GitHub API responses
-- `git` - For cloning repositories
-- Access to GitHub (with optional token for API rate limits)
+- `git` - For cloning repositories and generating diffs
+- Access to GitHub or Azure DevOps (with optional token for API rate limits)
 
-## Unit Testing
+## Using with LLMs
 
-### Testing Bash Scripts
+The scripts generate an optimized markdown file (`pr_diff_result.md` or `pr_diff_analysis.md`) structured specifically for LLM code review:
 
-Unit tests are available in the `unit_tests.sh` script:
+1. **PR Context**: Basic information about the PR, branches, and repositories
+2. **Summary**: Count of new, modified, and deleted files
+3. **New Files**: Complete content of newly added files
+4. **Diffs**: Clean, focused diff output for modified files with 3 lines of context
 
-```bash
-# Run the unit tests
-./unit_tests.sh
-```
+This format allows LLMs to:
+- Understand the scope of changes quickly
+- See full context for new files
+- Focus on actual code changes without noise
+- Generate more accurate and helpful code reviews
 
-The unit tests verify that the scripts:
-- Have correct syntax
-- Include dependency checks
-- Validate input arguments
-- Handle output files correctly
-- Construct proper GitHub API URLs
-- Include error handling
+## Example Output
 
-### Testing PowerShell Scripts
-
-To test the PowerShell scripts, you can use the built-in validation in PowerShell:
-
-```powershell
-# Validate PowerShell script syntax
-Test-ScriptFileInfo -Path analyze-pr-diff.ps1
-Test-ScriptFileInfo -Path analyze-pr-diff-min.ps1
-```
-
-## Output
-
-All scripts (both Bash and PowerShell) generate markdown files with:
-- Lists of new, deleted, and modified files
-- Full content comparison for modified files
-
-### Example Output (Minimal Version)
+The scripts generate a markdown file with this structure:
 
 ```markdown
-PR: user/repo #123
-Base: main
-Head: feature-branch
+# PR REVIEW CONTEXT
 
-New Files:
+PR: user/repo #123
+URL: https://github.com/user/repo/pull/123
+Base Branch: main
+Head Branch: feature-branch
+Generated: Mon Apr 21 20:00:00 CEST 2025
+
+## PR SUMMARY
+
+Total Changes: 3 files
+New: 1 | Modified: 1 | Deleted: 1
+
+### New Files:
 - src/new.js
 
-Deleted Files:
+### NEW FILE CONTENTS
+
+FILE: src/new.js
+<NEW_CONTENT>
+// New file content here
+</NEW_CONTENT>
+
+### Deleted Files:
 - src/deleted.js
 
-Modified Files:
+### Modified Files:
 - src/modified.js
 
-File: src/modified.js
-<<<<>>>>
-<<<<previous>>>>
-// Original content
-<<<<new>>>>
-// Modified content
-<<<<>>>>
+### DIFF SUMMARY
+
+FILE: src/modified.js
+<DIFF>
+@@ -1,5 +1,5 @@
+  // File header
+- // Original content
++ // Modified content
+  // Footer
+</DIFF>
 ```
 
-### Example Output (Full Version)
-
-```markdown
-# PR Analysis for user/repo PR #123
-Base branch: `main`
-Head branch: `feature-branch`
-Generated on: Mon Apr 21 09:25:00 CEST 2025
-
----
-
-## 🟩 New Files
-
-- `src/new.js`
-
-## 🟥 Deleted Files
-
-- `src/deleted.js`
-
-## 🟨 Modified Files
-
-- `src/modified.js`
-
----
-
-# Detailed Diffs
-
-## 🔄 Modified: `src/modified.js`
-
-<<<<>>>>
-<<<<previous>>>>
-// Original content
-
-<<<<new>>>>
-// Modified content
-<<<<>>>>
-```
-
-> Note: Both the Bash and PowerShell scripts produce identical output formats. The PowerShell scripts are functionally equivalent to their Bash counterparts but optimized for Windows environments.
+This format provides exactly what an LLM needs for effective code review: context, changes, and concise diffs optimized for token efficiency.
