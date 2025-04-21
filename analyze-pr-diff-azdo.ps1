@@ -11,20 +11,54 @@ if (-not (Get-Command jq -ErrorAction SilentlyContinue)) {
 # --- Input validation ---
 param (
     [Parameter(Mandatory=$true)]
-    [string]$PullRequestId,
-    
-    [Parameter(Mandatory=$true)]
-    [string]$Organization,
-    
-    [Parameter(Mandatory=$true)]
-    [string]$Project,
-    
-    [Parameter(Mandatory=$true)]
-    [string]$Repository,
+    [string]$PR_URL,
     
     [Parameter(Mandatory=$false)]
     [string]$PAT = ""
 )
+
+# --- Extract PR components from URL ---
+# Expected URL format: https://dev.azure.com/{organization}/{project}/_git/{repository}/pullrequest/{id}
+# Or alternative format: https://{organization}.visualstudio.com/{project}/_git/{repository}/pullrequest/{id}
+
+try {
+    $URI = [Uri]$PR_URL
+    $PathSegments = $URI.AbsolutePath -split '/'
+    
+    # Different parsing logic based on the URL format
+    if ($URI.Host -eq "dev.azure.com") {
+        # Format: https://dev.azure.com/{organization}/{project}/_git/{repository}/pullrequest/{id}
+        $Organization = $PathSegments[1]
+        $Project = $PathSegments[2]
+        $RepoIndex = [array]::IndexOf($PathSegments, '_git')
+        $Repository = $PathSegments[$RepoIndex + 1]
+        $PullRequestId = $PathSegments[$RepoIndex + 3]
+    } 
+    elseif ($URI.Host -match "\.visualstudio\.com$") {
+        # Format: https://{organization}.visualstudio.com/{project}/_git/{repository}/pullrequest/{id}
+        $Organization = $URI.Host -replace "\.visualstudio\.com$", ""
+        $Project = $PathSegments[1]
+        $RepoIndex = [array]::IndexOf($PathSegments, '_git')
+        $Repository = $PathSegments[$RepoIndex + 1]
+        $PullRequestId = $PathSegments[$RepoIndex + 3]
+    }
+    else {
+        throw "Unrecognized Azure DevOps URL format"
+    }
+    
+    Write-Output "Extracted from URL:"
+    Write-Output "Organization: $Organization"
+    Write-Output "Project: $Project"
+    Write-Output "Repository: $Repository"
+    Write-Output "PR ID: $PullRequestId"
+} 
+catch {
+    Write-Error "Failed to parse Azure DevOps PR URL. Please check the format and try again."
+    Write-Error "Expected format: https://dev.azure.com/{organization}/{project}/_git/{repository}/pullrequest/{id}"
+    Write-Error "Or: https://{organization}.visualstudio.com/{project}/_git/{repository}/pullrequest/{id}"
+    Write-Error "Error: $_"
+    exit 1
+}
 
 # --- Setup Azure DevOps connection ---
 $AzDoBaseUrl = "https://dev.azure.com/$Organization/$Project"

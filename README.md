@@ -32,8 +32,8 @@ This repository contains shell and PowerShell scripts for analyzing GitHub pull 
 ./analyze-pr-diff-min.ps1 <GitHub PR URL> [GitHub Token]
 
 # For Azure DevOps PowerShell scripts
-./analyze-pr-diff-azdo.ps1 -PullRequestId <PR_ID> -Organization <ORG> -Project <PROJECT> -Repository <REPO> [-PAT <PERSONAL_ACCESS_TOKEN>]
-./analyze-pr-diff-min-azdo.ps1 -PullRequestId <PR_ID> -Organization <ORG> -Project <PROJECT> -Repository <REPO> [-PAT <PERSONAL_ACCESS_TOKEN>]
+./analyze-pr-diff-azdo.ps1 -PR_URL <Azure_DevOps_PR_URL> [-PAT <PERSONAL_ACCESS_TOKEN>]
+./analyze-pr-diff-min-azdo.ps1 -PR_URL <Azure_DevOps_PR_URL> [-PAT <PERSONAL_ACCESS_TOKEN>]
 ```
 
 ### Azure DevOps Pipeline Integration
