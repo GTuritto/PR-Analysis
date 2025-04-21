@@ -14,6 +14,12 @@ This repository contains shell and PowerShell scripts for analyzing GitHub pull 
 - `analyze-pr-diff.ps1` - Full featured script for PR analysis in PowerShell
 - `analyze-pr-diff-min.ps1` - Minimalist version of the PR analysis script in PowerShell
 
+### Azure DevOps Integration
+
+- `analyze-pr-diff-azdo.ps1` - Full featured PowerShell script for Azure DevOps PR analysis
+- `analyze-pr-diff-min-azdo.ps1` - Minimalist PowerShell script for Azure DevOps PR analysis
+- `azure-pipelines.yml` - Azure DevOps pipeline configuration for automation
+
 ## Usage
 
 ```bash
@@ -24,7 +30,20 @@ This repository contains shell and PowerShell scripts for analyzing GitHub pull 
 # For PowerShell scripts
 ./analyze-pr-diff.ps1 <GitHub PR URL> [GitHub Token]
 ./analyze-pr-diff-min.ps1 <GitHub PR URL> [GitHub Token]
+
+# For Azure DevOps PowerShell scripts
+./analyze-pr-diff-azdo.ps1 -PullRequestId <PR_ID> -Organization <ORG> -Project <PROJECT> -Repository <REPO> [-PAT <PERSONAL_ACCESS_TOKEN>]
+./analyze-pr-diff-min-azdo.ps1 -PullRequestId <PR_ID> -Organization <ORG> -Project <PROJECT> -Repository <REPO> [-PAT <PERSONAL_ACCESS_TOKEN>]
 ```
+
+### Azure DevOps Pipeline Integration
+
+To use the scripts in an Azure DevOps pipeline:
+
+1. Add the `azure-pipelines.yml` file to your repository
+2. Create a new pipeline in Azure DevOps pointing to this file
+3. The pipeline will automatically run on pull requests to the specified branches
+4. You can select between full and minimal analysis using a parameter
 
 ## Requirements
 
