@@ -2,6 +2,8 @@
 # Stop on errors
 $ErrorActionPreference = "Stop"
 
+# Modified to include PR commentaries and conversations in the final output
+
 # --- No external dependencies required ---
 # This script uses only native PowerShell capabilities
 
@@ -74,6 +76,30 @@ Write-Output "Fetching PR info from Azure DevOps API..."
 # --- Get PR details ---
 $PrApiUrl = "$AzDoBaseUrl/_apis/git/repositories/$Repository/pullRequests/$PullRequestId`?api-version=$ApiVersion"
 $PR_INFO = Invoke-RestMethod -Uri $PrApiUrl -Headers $AuthHeader -Method Get
+
+# --- Functions to fetch PR threads and comments ---
+function Get-PRThreads {
+    param (
+        [string]$AzDoBaseUrl,
+        [string]$Repository,
+        [string]$PullRequestId,
+        [string]$ApiVersion,
+        [hashtable]$Headers
+    )
+    
+    try {
+        $threadsUrl = "$AzDoBaseUrl/_apis/git/repositories/$Repository/pullRequests/$PullRequestId/threads?api-version=$ApiVersion"
+        Write-Output "Fetching PR threads from $threadsUrl"
+        $response = Invoke-RestMethod -Uri $threadsUrl -Headers $Headers -Method Get -ErrorAction Stop
+        Write-Output "Retrieved $($response.count) thread objects with $($response.value.count) threads"
+        return $response
+    }
+    catch {
+        Write-Warning "Error fetching PR threads: $_"
+        # Return empty object instead of failing
+        return @{count = 0; value = @()}
+    }
+}
 
 $BASE_BRANCH = $PR_INFO.targetRefName -replace "refs/heads/"
 $HEAD_BRANCH = $PR_INFO.sourceRefName -replace "refs/heads/"
@@ -274,7 +300,7 @@ foreach ($file in $MODIFIED_FILES) {
 # Write file category breakdown
 "**Files by Category**" | Out-File -FilePath $OUTPUT_FILE -Append
 foreach ($category in $fileCategories.Keys | Sort-Object) {
-    "- $category: $($fileCategories[$category]) files" | Out-File -FilePath $OUTPUT_FILE -Append
+    "- $category" + ": $($fileCategories[$category]) files" | Out-File -FilePath $OUTPUT_FILE -Append
 }
 "" | Out-File -FilePath $OUTPUT_FILE -Append
 
@@ -379,11 +405,97 @@ foreach ($file in $MODIFIED_FILES) {
     }
 }
 
-# We're simplifying the script to focus on generating the diff file for LLM consumption
-# Removing the PR comment feature to keep things minimal and focused
+# --- Fetch and add PR comments and conversations to the output file ---
+"## PR COMMENTARIES AND CONVERSATIONS" | Out-File -FilePath $OUTPUT_FILE -Append
+"" | Out-File -FilePath $OUTPUT_FILE -Append
+
+# Fetch PR threads (comments and discussions)
+Write-Output "Fetching PR comments and conversations..."
+try {
+    $PR_THREADS = Get-PRThreads -AzDoBaseUrl $AzDoBaseUrl -Repository $Repository -PullRequestId $PullRequestId -ApiVersion $ApiVersion -Headers $AuthHeader
+    
+    "### PR Comments and Discussions" | Out-File -FilePath $OUTPUT_FILE -Append
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+
+    if ($PR_THREADS.count -eq 0 -or $PR_THREADS.value.count -eq 0) {
+        "No comments found on this PR." | Out-File -FilePath $OUTPUT_FILE -Append
+    } else {
+        Write-Output "Processing $($PR_THREADS.value.count) comment threads for output"
+        # Process each thread
+        foreach ($thread in $PR_THREADS.value) {
+            try {
+                # Thread with a specific file reference
+                if ($thread.threadContext -and $thread.threadContext.filePath) {
+                    $filePath = $thread.threadContext.filePath
+                    $lineNumber = if ($thread.threadContext.rightFileStart) { $thread.threadContext.rightFileStart.line } else { "N/A" }
+                    
+                    "#### Comment thread on file" + ": $filePath (line $lineNumber)" | Out-File -FilePath $OUTPUT_FILE -Append
+                    "" | Out-File -FilePath $OUTPUT_FILE -Append
+                } else {
+                    "#### General comment thread" | Out-File -FilePath $OUTPUT_FILE -Append
+                    "" | Out-File -FilePath $OUTPUT_FILE -Append
+                }
+                
+                # Process each comment in the thread
+                if ($thread.comments -and $thread.comments.Count -gt 0) {
+                    Write-Output "Processing $($thread.comments.Count) comments in thread"
+                    foreach ($comment in $thread.comments) {
+                        try {
+                            $author = if ($comment.author -and $comment.author.displayName) {
+                                $comment.author.displayName 
+                            } else { 
+                                "Unknown User" 
+                            }
+                            
+                            # Format the date if possible
+                            $commentDate = $comment.publishedDate
+                            try {
+                                $dateObj = [DateTime]::Parse($comment.publishedDate)
+                                $commentDate = $dateObj.ToString('yyyy-MM-dd HH:mm:ss')
+                            } catch {
+                                # Use the original string if parsing fails
+                                Write-Warning "Could not parse date: $($comment.publishedDate)"
+                            }
+                            
+                            # Process the comment content - replace escaped newlines with actual newlines
+                            $content = if ($comment.content) {
+                                $comment.content -replace '\r\n', "`n" -replace '\r', "`n" -replace '\n', "`n"
+                            } else {
+                                "(No comment content)"
+                            }
+                            
+                            "**$author** on $commentDate" + ":" | Out-File -FilePath $OUTPUT_FILE -Append
+                            "" | Out-File -FilePath $OUTPUT_FILE -Append
+                            "$content" | Out-File -FilePath $OUTPUT_FILE -Append
+                            "" | Out-File -FilePath $OUTPUT_FILE -Append
+                            "---" | Out-File -FilePath $OUTPUT_FILE -Append
+                        } catch {
+                            Write-Warning "Error processing comment: $_"
+                            "*Error processing a comment*" | Out-File -FilePath $OUTPUT_FILE -Append
+                            "" | Out-File -FilePath $OUTPUT_FILE -Append
+                            "---" | Out-File -FilePath $OUTPUT_FILE -Append
+                        }
+                    }
+                } else {
+                    "*No comments in this thread*" | Out-File -FilePath $OUTPUT_FILE -Append
+                    "---" | Out-File -FilePath $OUTPUT_FILE -Append
+                }
+                
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            } catch {
+                Write-Warning "Error processing thread: $_"
+                "*Error processing a comment thread*" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            }
+        }
+    }
+} catch {
+    Write-Warning "Failed to fetch PR comments: $_"
+    "Could not retrieve PR comments and conversations due to an error." | Out-File -FilePath $OUTPUT_FILE -Append
+}
 
 # --- Cleanup ---
 Remove-Item -Recurse -Force $BASE_DIR
 Remove-Item -Recurse -Force $HEAD_DIR
 
-Write-Output "`n✅ Analysis complete. Output written to: $OUTPUT_FILE"
+Write-Output "`n✅ Analysis complete with PR commentaries. Output written to: $OUTPUT_FILE"

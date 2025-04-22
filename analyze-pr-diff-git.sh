@@ -1,8 +1,13 @@
 #!/bin/bash
-set -euo pipefail
+# Remove strict error handling for debugging
+# set -euo pipefail
+
+# Enable debug output
+set -x
 
 # --- No external dependencies required ---
 # This script uses pure Bash for all operations with no external tools
+# Modified to include PR commentaries and conversations in the final output
 
 # --- Input ---
 if [[ $# -lt 1 ]]; then
@@ -20,6 +25,10 @@ if [[ ! "$PR_URL" =~ ^https://github.com/([^/]+)/([^/]+)/pull/([0-9]+) ]]; then
   echo "Expected format: https://github.com/owner/repo/pull/123"
   exit 1
 fi
+
+# Add error tracking
+error_log="/tmp/pr_analysis_errors.log"
+echo "Starting PR analysis at $(date)" > "$error_log"
 
 OWNER=$(echo "$PR_URL" | cut -d'/' -f4)
 REPO=$(echo "$PR_URL" | cut -d'/' -f5)
@@ -97,10 +106,14 @@ BASE_DIR=$(mktemp -d)
 HEAD_DIR=$(mktemp -d)
 
 # Try to clone the branches
-echo "Cloning base branch: $BASE_BRANCH"
-git clone --quiet --depth=1 --branch "$BASE_BRANCH" "$CLONE_URL" "$BASE_DIR" || {
-  echo "Failed to clone base branch directly. Trying alternative approach..."
-  git clone --quiet --depth=1 "$CLONE_URL" "$BASE_DIR"
+echo "Cloning base branch: $BASE_BRANCH" | tee -a "$error_log"
+set +e  # Disable exit on error for git clone
+git clone --quiet --depth=1 --branch "$BASE_BRANCH" "$CLONE_URL" "$BASE_DIR" 2>>"$error_log" || {
+  echo "Failed to clone base branch directly. Trying alternative approach..." | tee -a "$error_log"
+  git clone --quiet --depth=1 "$CLONE_URL" "$BASE_DIR" 2>>"$error_log" || {
+    echo "ERROR: Failed to clone repository. See $error_log for details." | tee -a "$error_log"
+    exit 1
+  }
 }
 
 echo "Cloning head branch: $HEAD_BRANCH"
@@ -200,6 +213,41 @@ get_file_size_kb() {
   local size_bytes=$(wc -c < "$file_path")
   local size_kb=$(echo "scale=2; $size_bytes/1024" | bc)
   echo "$size_kb"
+}
+
+# --- Add a function to fetch PR comments ---
+fetch_pr_comments() {
+  local owner="$1"
+  local repo="$2"
+  local pr_number="$3"
+  local auth_header="$4"
+  
+  # Get general comments from the PR (issue comments)
+  # Add debugging
+  echo "Fetching comments from: https://api.github.com/repos/$owner/$repo/issues/$pr_number/comments" >> "$error_log"
+  curl -s -H "$auth_header" "https://api.github.com/repos/$owner/$repo/issues/$pr_number/comments"
+}
+
+# --- Add a function to fetch PR review comments (for diff-specific comments) ---
+fetch_pr_review_comments() {
+  local owner="$1"
+  local repo="$2"
+  local pr_number="$3"
+  local auth_header="$4"
+  
+  # Get review comments from the PR (comments on specific lines of code)
+  curl -s -H "$auth_header" "https://api.github.com/repos/$owner/$repo/pulls/$pr_number/comments"
+}
+
+# --- Add a function to fetch PR reviews ---
+fetch_pr_reviews() {
+  local owner="$1"
+  local repo="$2"
+  local pr_number="$3"
+  local auth_header="$4"
+  
+  # Get reviews from the PR
+  curl -s -H "$auth_header" "https://api.github.com/repos/$owner/$repo/pulls/$pr_number/reviews"
 }
 
 # --- Output file optimized for LLM consumption ---
@@ -392,7 +440,253 @@ for file in "${MODIFIED_FILES[@]}"; do
   echo "" >> "$OUTPUT_FILE"
 done
 
+# --- Fetch and add PR comments and conversations ---
+echo "## PR COMMENTARIES AND CONVERSATIONS" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+# Fetch PR comments
+echo "Fetching PR comments and conversations..."
+set +e  # Disable exit on error for API calls
+
+echo "Fetching general PR comments..." >> "$error_log"
+PR_COMMENTS=$(fetch_pr_comments "$OWNER" "$REPO" "$PR_NUMBER" "$AUTH_HEADER" 2>"$error_log")
+echo "PR_COMMENTS fetched with status $?" >> "$error_log"
+
+echo "Fetching PR review comments..." >> "$error_log"
+PR_REVIEW_COMMENTS=$(fetch_pr_review_comments "$OWNER" "$REPO" "$PR_NUMBER" "$AUTH_HEADER" 2>>"$error_log")
+echo "PR_REVIEW_COMMENTS fetched with status $?" >> "$error_log"
+
+echo "Fetching PR reviews..." >> "$error_log"
+PR_REVIEWS=$(fetch_pr_reviews "$OWNER" "$REPO" "$PR_NUMBER" "$AUTH_HEADER" 2>>"$error_log")
+echo "PR_REVIEWS fetched with status $?" >> "$error_log"
+
+# Add PR general comments to the output file
+echo "### PR Comments" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+if [[ "$PR_COMMENTS" == "[]" ]]; then
+  echo "No general comments found on this PR." >> "$OUTPUT_FILE"
+else
+  # Simple approach to extract useful PR comment information
+  echo "Processing PR comments..." >> "$error_log"
+  
+  # Extract only the essential structure from the API response
+  echo "Raw comment API response saved to $error_log.comments" >> "$error_log"
+  echo "$PR_COMMENTS" > "$error_log.comments"
+  
+  # Check if we have proper comments array
+  if [[ "$PR_COMMENTS" == "["* ]]; then
+    # Parse comments directly from file to avoid shell limitations with large strings
+    echo "$PR_COMMENTS" > /tmp/pr_comments.json
+    
+    # Extract user login and body with cleaner approach
+    # Use 'jq' if available, otherwise fallback to grep/sed
+    if command -v jq &> /dev/null; then
+      echo "Using jq for JSON parsing" >> "$error_log"
+      # Extract comments with jq
+      jq -r '.[] | "USER:" + .user.login + "\nDATE:" + .created_at + "\nBODY:" + .body + "\n---"' /tmp/pr_comments.json > /tmp/pr_comments_parsed.txt
+    else
+      echo "Fallback to grep/sed for parsing" >> "$error_log"
+      # Manual parsing for each comment using grep
+      comment_count=0
+      while read -r line; do
+        if [[ "$line" == *'"login":"'* ]]; then
+          user=$(echo "$line" | sed -E 's/.*"login":"([^"]+)".*/\1/')
+          echo "USER:$user" >> /tmp/pr_comments_parsed.txt
+        elif [[ "$line" == *'"created_at":"'* ]]; then
+          date=$(echo "$line" | sed -E 's/.*"created_at":"([^"]+)".*/\1/')
+          echo "DATE:$date" >> /tmp/pr_comments_parsed.txt
+        elif [[ "$line" == *'"body":"'* ]]; then
+          body=$(echo "$line" | sed -E 's/.*"body":"([^"]*)".*/\1/' | sed 's/\\r\\n/\n/g' | sed 's/\\r/\n/g' | sed 's/\\n/\n/g')
+          echo "BODY:$body" >> /tmp/pr_comments_parsed.txt
+          echo "---" >> /tmp/pr_comments_parsed.txt
+          ((comment_count++))
+        fi
+      done < /tmp/pr_comments.json
+      echo "Extracted $comment_count comments" >> "$error_log"
+    fi
+    
+    # Now read the processed comments and format them for the output file
+    user=""
+    date=""
+    body=""
+    section=""
+    while IFS= read -r line; do
+      if [[ "$line" == "USER:"* ]]; then
+        user=${line#USER:}
+      elif [[ "$line" == "DATE:"* ]]; then
+        date=${line#DATE:}
+      elif [[ "$line" == "BODY:"* ]]; then
+        body=${line#BODY:}
+      elif [[ "$line" == "---" && -n "$user" ]]; then
+      
+        # Output formatted comment
+        echo "**@$user** commented on $date:" >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+        echo "$body" >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+        echo "---" >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+        
+        # Reset variables for next comment
+        user=""
+        date=""
+        body=""
+      fi
+    done < /tmp/pr_comments_parsed.txt
+    
+    # Cleanup temp files
+    rm -f /tmp/pr_comments.json /tmp/pr_comments_parsed.txt
+  else
+    echo "No comments found on this PR." >> "$OUTPUT_FILE"
+    echo "Raw API response format wasn't as expected." >> "$error_log"
+  fi
+fi
+
+# Add PR review comments to the output file
+echo "### Code Review Comments" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+if [[ "$PR_REVIEW_COMMENTS" == "[]" ]]; then
+  echo "No code review comments found on this PR." >> "$OUTPUT_FILE"
+else
+  # Simplified JSON parsing approach for review comments
+  echo "Processing review comments..." >> "$error_log"
+  echo "Raw review comments API response saved to $error_log.review_comments" >> "$error_log"
+  echo "$PR_REVIEW_COMMENTS" > "$error_log.review_comments"
+  
+  if [[ "$PR_REVIEW_COMMENTS" == "["* ]]; then
+    # Process each review comment object
+    review_comment_objects=$(echo "$PR_REVIEW_COMMENTS" | grep -E -o '{[^{]*"user"[^}]*}' | sed 's/\\\\//g')
+    echo "$review_comment_objects" | while read -r comment; do
+      if [[ -z "$comment" ]]; then
+        continue
+      fi
+      
+      # Extract user login from user object
+      if [[ "$comment" =~ \"user\":\{[^\}]*\"login\":\"([^\"]+)\" ]]; then
+        user="${BASH_REMATCH[1]}"
+      else
+        user="unknown user"
+      fi
+      
+      # Extract timestamp
+      if [[ "$comment" =~ \"created_at\":\"([^\"]+)\" ]]; then
+        created_at="${BASH_REMATCH[1]}"
+      else
+        created_at="unknown time"
+      fi
+      
+      # Extract body
+      if [[ "$comment" =~ \"body\":\"([^\"]+)\" ]]; then
+        body="${BASH_REMATCH[1]}"
+        # Replace escaped newlines with actual newlines
+        body=$(echo "$body" | sed 's/\\n/\n/g' | sed 's/\\r//g')
+      else
+        body="(No comment body)"
+      fi
+      
+      # Extract file path
+      if [[ "$comment" =~ \"path\":\"([^\"]+)\" ]]; then
+        path="${BASH_REMATCH[1]}"
+      else
+        path="unknown file"
+      fi
+      
+      # Extract line position
+      if [[ "$comment" =~ \"position\":([0-9]+) ]]; then
+        position="${BASH_REMATCH[1]}"
+      else
+        position="unknown line"
+      fi
+      
+      echo "**@$user** commented on $path (line $position) on $created_at:" >> "$OUTPUT_FILE"
+      echo "" >> "$OUTPUT_FILE"
+      echo "$body" >> "$OUTPUT_FILE"
+      echo "" >> "$OUTPUT_FILE"
+      echo "---" >> "$OUTPUT_FILE"
+      echo "" >> "$OUTPUT_FILE"
+    done
+  else
+    echo "No valid review comment array found." >> "$OUTPUT_FILE"
+  fi
+fi
+
+# Add PR reviews to the output file
+echo "### PR Reviews" >> "$OUTPUT_FILE"
+echo "" >> "$OUTPUT_FILE"
+
+if [[ "$PR_REVIEWS" == "[]" ]]; then
+  echo "No reviews found on this PR." >> "$OUTPUT_FILE"
+else
+  # Simplified JSON parsing approach for reviews
+  echo "Processing reviews..." >> "$error_log"
+  echo "Raw reviews API response saved to $error_log.reviews" >> "$error_log"
+  echo "$PR_REVIEWS" > "$error_log.reviews"
+  
+  if [[ "$PR_REVIEWS" == "["* ]]; then
+    # Process each review object
+    review_objects=$(echo "$PR_REVIEWS" | grep -E -o '{[^{]*"user"[^}]*}' | sed 's/\\\\//g')
+    echo "$review_objects" | while read -r review; do
+      if [[ -z "$review" ]]; then
+        continue
+      fi
+      
+      # Extract user login from user object
+      if [[ "$review" =~ \"user\":\{[^\}]*\"login\":\"([^\"]+)\" ]]; then
+        user="${BASH_REMATCH[1]}"
+      else
+        user="unknown user"
+      fi
+      
+      # Extract state
+      if [[ "$review" =~ \"state\":\"([^\"]+)\" ]]; then
+        state="${BASH_REMATCH[1]}"
+      else
+        state="unknown state"
+      fi
+      
+      # Skip incomplete reviews
+      if [[ -z "$user" || -z "$state" || "$user" == "unknown user" || "$state" == "unknown state" ]]; then
+        continue
+      fi
+      
+      # Extract submitted timestamp
+      if [[ "$review" =~ \"submitted_at\":\"([^\"]+)\" ]]; then
+        submitted_at="${BASH_REMATCH[1]}"
+      else
+        submitted_at="unknown time"
+      fi
+      
+      # Extract body
+      if [[ "$review" =~ \"body\":\"([^\"]+)\" ]]; then
+        body="${BASH_REMATCH[1]}"
+        # Replace escaped newlines with actual newlines
+        body=$(echo "$body" | sed 's/\\n/\n/g' | sed 's/\\r//g')
+      else
+        body=""
+      fi
+      
+      echo "**@$user** $state the PR on $submitted_at:" >> "$OUTPUT_FILE"
+      echo "" >> "$OUTPUT_FILE"
+      
+      if [[ -n "$body" && "$body" != "null" ]]; then
+        echo "$body" >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+      else
+        echo "*No review comment provided*" >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+      fi
+      
+      echo "---" >> "$OUTPUT_FILE"
+      echo "" >> "$OUTPUT_FILE"
+    done
+  else
+    echo "No valid review array found." >> "$OUTPUT_FILE"
+  fi
+fi
+
 # --- Cleanup ---
 rm -rf "$BASE_DIR" "$HEAD_DIR"
 
-echo "Diff saved to $OUTPUT_FILE"
+echo "Diff with PR commentaries saved to $OUTPUT_FILE"

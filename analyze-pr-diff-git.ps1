@@ -2,6 +2,8 @@
 # Stop on errors
 $ErrorActionPreference = "Stop"
 
+# Modified to include PR commentaries and conversations in the final output
+
 # --- No external dependencies required ---
 # This script uses only native PowerShell capabilities
 
@@ -49,6 +51,75 @@ if ($GITHUB_TOKEN) {
 
 Write-Output "Fetching PR information..."
 $PR_INFO = Invoke-RestMethod -Uri $API_URL -Headers $AUTH_HEADER
+
+# Fetch PR comments
+function Get-PRComments {
+    param (
+        [string]$Owner,
+        [string]$Repo,
+        [string]$PrNumber,
+        [hashtable]$Headers
+    )
+    
+    # Get comments from the PR issue
+    try {
+        $commentsUrl = "https://api.github.com/repos/$Owner/$Repo/issues/$PrNumber/comments"
+        Write-Output "Fetching PR comments from $commentsUrl"
+        $response = Invoke-RestMethod -Uri $commentsUrl -Headers $Headers -ErrorAction Stop
+        Write-Output "Retrieved $($response.Count) PR comments"
+        return $response
+    } catch {
+        Write-Warning "Error fetching PR comments: $_"
+        # Return empty array instead of failing
+        return @()
+    }
+}
+
+# Fetch PR review comments (specific to code lines)
+function Get-PRReviewComments {
+    param (
+        [string]$Owner,
+        [string]$Repo,
+        [string]$PrNumber,
+        [hashtable]$Headers
+    )
+    
+    # Get review comments from the PR (comments on specific lines of code)
+    try {
+        $reviewCommentsUrl = "https://api.github.com/repos/$Owner/$Repo/pulls/$PrNumber/comments"
+        Write-Output "Fetching PR review comments from $reviewCommentsUrl"
+        $response = Invoke-RestMethod -Uri $reviewCommentsUrl -Headers $Headers -ErrorAction Stop
+        Write-Output "Retrieved $($response.Count) PR review comments"
+        return $response
+    } catch {
+        Write-Warning "Error fetching PR review comments: $_"
+        # Return empty array instead of failing
+        return @()
+    }
+}
+
+# Fetch PR reviews
+function Get-PRReviews {
+    param (
+        [string]$Owner,
+        [string]$Repo,
+        [string]$PrNumber,
+        [hashtable]$Headers
+    )
+    
+    # Get reviews from the PR
+    try {
+        $reviewsUrl = "https://api.github.com/repos/$Owner/$Repo/pulls/$PrNumber/reviews"
+        Write-Output "Fetching PR reviews from $reviewsUrl"
+        $response = Invoke-RestMethod -Uri $reviewsUrl -Headers $Headers -ErrorAction Stop
+        Write-Output "Retrieved $($response.Count) PR reviews"
+        return $response
+    } catch {
+        Write-Warning "Error fetching PR reviews: $_"
+        # Return empty array instead of failing
+        return @()
+    }
+}
 
 # Use native PowerShell JSON handling
 $BASE_BRANCH = $PR_INFO.base.ref
@@ -230,8 +301,12 @@ foreach ($file in $MODIFIED_FILES) {
 
 # Write enhanced summary statistics
 "**Repository Stats**" | Out-File -FilePath $OUTPUT_FILE -Append
-"- Total Changes: $totalFiles files" | Out-File -FilePath $OUTPUT_FILE -Append
-"- Files by Type: New: $($NEW_FILES.Count) | Modified: $($MODIFIED_FILES.Count) | Deleted: $($DELETED_FILES.Count)" | Out-File -FilePath $OUTPUT_FILE -Append
+# Use literal strings to prevent colon parsing issues
+$colonStr = ':'
+('- Total Changes' + $colonStr + ' ' + $totalFiles + ' files') | Out-File -FilePath $OUTPUT_FILE -Append
+
+$filesStr = '- Files by Type' + $colonStr + ' New' + $colonStr + ' ' + $NEW_FILES.Count + ' | Modified' + $colonStr + ' ' + $MODIFIED_FILES.Count + ' | Deleted' + $colonStr + ' ' + $DELETED_FILES.Count
+$filesStr | Out-File -FilePath $OUTPUT_FILE -Append
 "- Estimated Tokens: $totalTokenEstimate" | Out-File -FilePath $OUTPUT_FILE -Append
 "- Processing Time: $(Get-Date) GMT" | Out-File -FilePath $OUTPUT_FILE -Append
 "" | Out-File -FilePath $OUTPUT_FILE -Append
@@ -239,7 +314,7 @@ foreach ($file in $MODIFIED_FILES) {
 # Write file category breakdown
 "**Files by Category**" | Out-File -FilePath $OUTPUT_FILE -Append
 foreach ($category in $fileCategories.Keys | Sort-Object) {
-    "- $category: $($fileCategories[$category]) files" | Out-File -FilePath $OUTPUT_FILE -Append
+    ('- ' + $category + $colonStr + ' ' + $fileCategories[$category] + ' files') | Out-File -FilePath $OUTPUT_FILE -Append
 }
 "" | Out-File -FilePath $OUTPUT_FILE -Append
 
@@ -342,8 +417,157 @@ foreach ($file in $MODIFIED_FILES) {
     }
 }
 
-# --- Cleanup ---
-Remove-Item -Recurse -Force $BASE_DIR
-Remove-Item -Recurse -Force $HEAD_DIR
+# --- Fetch and add PR comments and conversations to the output file
+"## PR COMMENTARIES AND CONVERSATIONS" | Out-File -FilePath $OUTPUT_FILE -Append
+"" | Out-File -FilePath $OUTPUT_FILE -Append
 
-Write-Output "Diff saved to $OUTPUT_FILE"
+# Fetch PR comments and reviews
+Write-Output "Fetching PR comments and conversations..."
+try {
+    $PR_COMMENTS = Get-PRComments -Owner $OWNER -Repo $REPO -PrNumber $PR_NUMBER -Headers $AUTH_HEADER
+    $PR_REVIEW_COMMENTS = Get-PRReviewComments -Owner $OWNER -Repo $REPO -PrNumber $PR_NUMBER -Headers $AUTH_HEADER
+    $PR_REVIEWS = Get-PRReviews -Owner $OWNER -Repo $REPO -PrNumber $PR_NUMBER -Headers $AUTH_HEADER
+
+    # Add PR general comments to the output file
+    "### PR Comments" | Out-File -FilePath $OUTPUT_FILE -Append
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+
+    if ($PR_COMMENTS.Count -eq 0) {
+        "No general comments found on this PR." | Out-File -FilePath $OUTPUT_FILE -Append
+    } else {
+        Write-Output "Processing $($PR_COMMENTS.Count) PR comments for output"
+        foreach ($comment in $PR_COMMENTS) {
+            try {
+                # Create a formatted date if possible
+                $commentDate = $comment.created_at
+                try {
+                    $dateObj = [DateTime]::Parse($comment.created_at)
+                    $commentDate = $dateObj.ToString('yyyy-MM-dd HH:mm:ss')
+                } catch {
+                    # Use the original string if parsing fails
+                }
+                
+                # Format the comment header
+                $commentHeader = "**@$($comment.user.login)** commented on $commentDate$colonStr"
+                $commentHeader | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+                
+                # Process the comment body - replace escaped newlines with actual newlines
+                $bodyText = $comment.body -replace '\r\n', "`n" -replace '\r', "`n" -replace '\n', "`n"
+                $bodyText | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+                "---" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            } catch {
+                Write-Warning "Error processing comment: $_"
+                "*Error processing a comment*" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            }
+        }
+    }
+
+    # Add PR review comments to the output file
+    "### Code Review Comments" | Out-File -FilePath $OUTPUT_FILE -Append
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+
+    if ($PR_REVIEW_COMMENTS.Count -eq 0) {
+        "No code review comments found on this PR." | Out-File -FilePath $OUTPUT_FILE -Append
+    } else {
+        Write-Output "Processing $($PR_REVIEW_COMMENTS.Count) PR review comments for output"
+        foreach ($comment in $PR_REVIEW_COMMENTS) {
+            try {
+                # Create a formatted date if possible
+                $commentDate = $comment.created_at
+                try {
+                    $dateObj = [DateTime]::Parse($comment.created_at)
+                    $commentDate = $dateObj.ToString('yyyy-MM-dd HH:mm:ss')
+                } catch {
+                    # Use the original string if parsing fails
+                }
+                
+                # Get line information safely
+                $lineInfo = ""
+                if ($null -ne $comment.position) {
+                    $lineInfo = " (line $($comment.position))"
+                }
+                
+                # Format the comment header
+                $commentHeader = "**@$($comment.user.login)** commented on $($comment.path)$lineInfo on $commentDate$colonStr"
+                $commentHeader | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+                
+                # Process the comment body - replace escaped newlines with actual newlines
+                $bodyText = $comment.body -replace '\r\n', "`n" -replace '\r', "`n" -replace '\n', "`n"
+                $bodyText | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+                "---" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            } catch {
+                Write-Warning "Error processing review comment: $_"
+                "*Error processing a review comment*" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            }
+        }
+    }
+
+    # Add PR reviews to the output file
+    "### PR Reviews" | Out-File -FilePath $OUTPUT_FILE -Append
+    "" | Out-File -FilePath $OUTPUT_FILE -Append
+
+    if ($PR_REVIEWS.Count -eq 0) {
+        "No reviews found on this PR." | Out-File -FilePath $OUTPUT_FILE -Append
+    } else {
+        Write-Output "Processing $($PR_REVIEWS.Count) PR reviews for output"
+        foreach ($review in $PR_REVIEWS) {
+            try {
+                # Create a formatted date if possible
+                $reviewDate = $review.submitted_at
+                try {
+                    $dateObj = [DateTime]::Parse($review.submitted_at)
+                    $reviewDate = $dateObj.ToString('yyyy-MM-dd HH:mm:ss')
+                } catch {
+                    # Use the original string if parsing fails
+                }
+                
+                # Format review state (capitalize first letter)
+                $reviewState = $review.state
+                if ($reviewState) {
+                    $reviewState = $reviewState.Substring(0,1).ToUpper() + $reviewState.Substring(1).ToLower()
+                } else {
+                    $reviewState = "reviewed"
+                }
+                
+                # Format the review header
+                $reviewHeader = "**@$($review.user.login)** $reviewState on $reviewDate$colonStr"
+                $reviewHeader | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+                
+                # Process the review body
+                if ($review.body) {
+                    # Replace escaped newlines with actual newlines
+                    $bodyText = $review.body -replace '\r\n', "`n" -replace '\r', "`n" -replace '\n', "`n"
+                    $bodyText | Out-File -FilePath $OUTPUT_FILE -Append
+                    "" | Out-File -FilePath $OUTPUT_FILE -Append
+                } else {
+                    "(No review comment provided)" | Out-File -FilePath $OUTPUT_FILE -Append
+                    "" | Out-File -FilePath $OUTPUT_FILE -Append
+                }
+                "---" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            } catch {
+                Write-Warning "Error processing review: $_"
+                "*Error processing a review*" | Out-File -FilePath $OUTPUT_FILE -Append
+                "" | Out-File -FilePath $OUTPUT_FILE -Append
+            }
+        }
+    }
+} catch {
+    Write-Warning "Failed to fetch PR comments: $_"
+    "Could not retrieve PR comments and conversations due to an error." | Out-File -FilePath $OUTPUT_FILE -Append
+}
+
+# --- Cleanup temporary directories
+Remove-Item -Path $BASE_DIR -Recurse -Force
+Remove-Item -Path $HEAD_DIR -Recurse -Force
+
+Write-Output "Diff with PR commentaries saved to $OUTPUT_FILE"
